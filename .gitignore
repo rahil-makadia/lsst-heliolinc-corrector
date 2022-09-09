@@ -1,5 +1,9 @@
 # specify files/directories for repo to ignore
 
+# SPICE kernels
+*.bsp
+*.tls
+
 # Jupyter Notebook and pycache
 .ipynb_checkpoints/
 __pycache__/
