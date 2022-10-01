@@ -686,9 +686,9 @@ def gr15_step(t0_old, t0, state0, acc0, dt, dt_factor, dt_max, tf_actual, tol, h
     integrator_flag = 0
     max_pc_iter = 12
     pc_tol = 1e-16
-    exp = 1.0/7.0 if adaptive_timestep else 0.0
     curr_iter = 0
     while True:
+        exp = 1.0/7.0 if adaptive_timestep else 0.0
         curr_iter += 1
         # predictor-corrector loop
         for _ in range(max_pc_iter):
@@ -732,12 +732,15 @@ def gr15_step(t0_old, t0, state0, acc0, dt, dt_factor, dt_max, tf_actual, tol, h
         if tf_actual > t0 and dt > dt_max or tf_actual < t0 and dt < dt_max:
             dt = dt_max
 
+        if curr_iter >= 5 or abs(dt) < 0.05: # abort integration if it gets stuck at one timestep or if timestep is too small
+            # print('exceeded 5 iter, Integration Aborted!!!')
+            # print(f'exceeded 5 iter, switching to fixed timestep temporarily, t0={t0}, flag={integrator_flag}')
+            adaptive_timestep = False
+            dt = 0.05 if dt_max>0 else -0.05
+
         if tf_actual > t0 and t0+dt > tf_actual  or  tf_actual < t0 and t0+dt < tf_actual:
             dt = tf_actual - t0
-        
-        if curr_iter >= 20: # abort integration if it gets stuck at one timestep
-            integrator_flag = 2
-        
+
         if integrator_flag > 0:
             break
 
