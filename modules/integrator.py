@@ -543,47 +543,66 @@ def gr15_coefficients(g, b, r, c, h_idx, accels):
     return g, b
 
 
-def get_initial_timestep(t0_actual, state0_actual, F0):
-    # sourcery skip: move-assign
-    '''
-    Compute the initial timestep and initialize the timestep counter
+def get_initial_timestep(acc_ppn, t0_actual, state0_actual, acc0_actual, dt0, dt_max, tf_actual):
+    """Compute the initial timestep and initialize the timestep counter
 
-            Parameters:
-                    t0_actual (float): [MJD], Epoch of integration period
-                    state0_actual (array): [au, au/day], Didymos state at integration epoch
-                    F0 (array): [au/day^2], Function evaluation at integration epoch
+    Args:
+        acc_ppn (_type_): _description_
+        t0_actual (float): [MJD], Epoch of integration period
+        state0_actual (array): [au, au/day], Didymos state at integration epoch
+        acc0_actual (array): [au/day^2], Function evaluation at integration epoch
+        dt0 (_type_): _description_
+        dt_max (_type_): _description_
+        tf_actual (_type_): _description_
 
-            Returns:
-                    dt0 (float): [day], Initial integration timestep
-                    timestep_counter (int): Timestep counter (1 because this function evaluates initial timestep)
-    '''
-    integrator_order = 15
-    # Evaluate initial timestep
-    pos0 = state0_actual[:3]
-    vel0 = state0_actual[3:6]
-    param0 = max(abs(pos0))
-    param1 = max(abs(F0))
-    if (param0 < 1e-5) or (param1 < 1e-5):
-        test_dt0 = 1e-6
+    Returns:
+        dt (float): [day], Initial integration timestep
+        dt_max (float): 
+        timestep_counter (int): Timestep counter (1 because this function evaluates initial timestep)
+        forward_prop (bool): 
+    """
+    forward_prop = 1 if tf_actual > t0_actual else 0
+    dt_max = dt_max if forward_prop else -dt_max
+
+    # if no predefined value, calculate initial timestep
+    if dt0 is None:
+        # Evaluate initial timestep
+        pos0 = state0_actual[:3]
+        vel0 = state0_actual[3:6]
+        param0 = max(abs(pos0))
+        param1 = max(abs(acc0_actual))
+        if (param0 < 1e-5) or (param1 < 1e-5):
+            test_dt0 = 1e-6
+        else:
+            test_dt0 = 0.01 * (param0 / param1)
+
+        # Perform one Euler step
+        pos1 = pos0 + test_dt0 * vel0
+        vel1 = vel0 + test_dt0 * acc0_actual
+        t1 = t0_actual + test_dt0
+        state1 = concat([pos1, vel1])
+        acc1 = acc_ppn(t1, state1)[3:6]
+        param2 = max(abs(acc1 - acc0_actual)) / test_dt0
+        if max(param1, param2) <= 1e-15:
+            test_dt1 = max([1e-6, test_dt0 * 1e-3])
+        else:
+            integrator_order = 15
+            test_dt1 = (0.01 / max(param1, param2)) ** (1.0 / (integrator_order + 1))
+
+        dt = abs(min(100*test_dt0, test_dt1))
     else:
-        test_dt0 = 0.01 * (param0 / param1)
-
-    # Perform one Euler step
-    pos1 = pos0 + test_dt0 * vel0
-    vel1 = vel0 + test_dt0 * F0
-    t1 = t0_actual + test_dt0
-    state1 = concat([pos1, vel1])
-    F1 = acc_ppn(t1, state1)[3:6]
-    param2 = max(abs(F1 - F0)) / test_dt0
-    if max(param1, param2) <= 1e-15:
-        test_dt1 = max([1e-6, test_dt0 * 1e-3])
-    else:
-        test_dt1 = (0.01 / max(param1, param2)) ** (1.0 / (integrator_order + 1))
-
-    dt0 = min(100*test_dt0, test_dt1)
+        dt = abs(dt0)
+    dt = dt if forward_prop else -dt
     timestep_counter = 1
 
-    return dt0, timestep_counter
+    # if initial timestep is bigger than final time - forward integration
+    if forward_prop and t0_actual+dt>tf_actual:
+        dt = tf_actual - t0_actual
+    # if initial timestep is bigger than final time - backward integration
+    if not forward_prop and t0_actual+dt<tf_actual:
+        dt = tf_actual - t0_actual
+
+    return dt, dt_max, timestep_counter, forward_prop
 
 
 @jit('float64[:](float64[:], float64[:], float64, float64[:,:], float64)', nopython=True, cache=True)
@@ -774,30 +793,14 @@ def propagate_gr15(t0, state0, tf, t_eval=array([]), adaptive_timestep=True, dt0
     if t0 == tf:
         print('Final time is same as integration start time!')
         return t0, state0, None
-    forward_prop = 1 if tf > t0 else 0
+
     b_old      = zeros((len(h)-1,3))
     b          = zeros((len(h)-1,3))
     g          = zeros((len(h)-1,3))
     e          = zeros((len(h)-1,3))
 
     acc0 = acc_ppn(t0, state0)[3:6]
-    # use predefined initial timestep or calculate initial timestep
-    if dt0 is not None:
-        dt = dt0
-        timestep_counter = 1
-    else:
-        dt, timestep_counter = get_initial_timestep(t0, state0, acc0)
-    # if initial timestep is bigger than final time - forward integration
-    if forward_prop and t0+dt>tf:
-        dt = tf - t0
-    # if integrating backwards in time, switch signs
-    if not forward_prop:
-        dt = -dt
-        dt_max = -dt_max
-        # if initial timestep is bigger than final time - backward integration
-        if t0+dt<tf:
-            dt = tf - t0
-
+    dt, dt_max, timestep_counter, forward_prop = get_initial_timestep(acc_ppn, t0, state0, acc0, dt0, dt_max, tf)
     t0_old = t0
     t0_list = [t0]
     state0_list = [state0]
@@ -818,9 +821,9 @@ def propagate_gr15(t0, state0, tf, t_eval=array([]), adaptive_timestep=True, dt0
     b_array = array(b_list)
 
     if t_eval.size == 1:
-        if tf > t0_array[0] and t_eval <= t0_array[-1]:
-            state_eval = gr15_interpolate(np.float64(t_eval), t0_array, state0_array, acc0_array, dt_array, b_array, h)
-    elif tf > t0_array[0]: # if t_eval is array in forward propagation
+        if (forward_prop and t_eval <= t0_array[-1]) or (not forward_prop and t_eval >= t0_array[-1]):
+            state_eval = gr15_interpolate(float64(t_eval), t0_array, state0_array, acc0_array, dt_array, b_array, h)
+    elif forward_prop: # if t_eval is array in forward propagation
         state_eval = array([gr15_interpolate(t_interp, t0_array, state0_array, acc0_array, dt_array, b_array, h) for t_interp in t_eval if t_interp <= t0_array[-1]])
     else: # if t_eval is array in backward propagation
         state_eval = array([gr15_interpolate(t_interp, t0_array, state0_array, acc0_array, dt_array, b_array, h) for t_interp in t_eval if t_interp >= t0_array[-1]])

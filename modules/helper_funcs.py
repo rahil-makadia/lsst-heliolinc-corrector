@@ -181,7 +181,7 @@ def accumulate_observations_efficiently(epoch, x_nom, obs_array, fd_pert=0.01):
         time_obs = Time(curr_obs[0], format='mjd', scale='tdb')
         ra_obs = curr_obs[1]
         dec_obs = curr_obs[2]
-        earth_state = spkez(399, mjd2et(time_obs.mjd), 'ECLIPJ2000', 'NONE', 0)[0]
+        earth_state = spkez(3, mjd2et(time_obs.mjd), 'ECLIPJ2000', 'NONE', 0)[0]
         change_units = 1/au2km*np.ones_like(earth_state) # convert km to au
         change_units[3:6] = day2sec*change_units[3:6] # convert au/sec to au/day
         earth_state = earth_state*change_units
