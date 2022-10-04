@@ -7,11 +7,11 @@ Implementation: Python 3.8, R. Makadia 09092022
 """
 
 import numpy as np
-from .integrator import spkFile, mjd2et, propagate_gr15
 from spiceypy import furnsh, spkez
 from astropy.time import Time
 from skyfield.api import load, S, W, wgs84
 
+from .integrator import spkFile, mjd2et, propagate_gr15
 for f in spkFile:
     furnsh(f)
 
@@ -31,6 +31,9 @@ hstack = np.hstack
 
 au2km = 1.495978707e8
 day2sec = 8.64e4
+lat = 30+14/60+40.68/3600 # lsst latitude, from https://www.lsst.org/scientists/keynumbers
+lon = 70+44/60+57.90/3600 # lsst longitude, from https://www.lsst.org/scientists/keynumbers
+elev = 2647 # lsst elevation, from https://www.lsst.org/scientists/keynumbers
 
 def get_equat_from_eclip(eclip_state):
     """Convert an ecliptic state to equatorial state
@@ -42,9 +45,9 @@ def get_equat_from_eclip(eclip_state):
         equat_state (vector): 6-element vector consisting of equatorial cartesian state
     """
     eme_obliq = 84381.448/3600*np.pi/180 # EMEJ2000 obliquity, https://ssd.jpl.nasa.gov/sbdb.cgi?sstr=didymos;old=0;orb=0;cov=1;log=0;cad=1
-    eclip2equat = array(([1,            0,                   0     ],
-                         [0,    cos(eme_obliq),     -sin(eme_obliq)],
-                         [0,    sin(eme_obliq),      cos(eme_obliq)])) # https://archive.org/details/131123ExplanatorySupplementAstronomicalAlmanac/page/n291/mode/2up\n,
+    eclip2equat = array((   [1,            0,                   0     ],
+                            [0,    cos(eme_obliq),     -sin(eme_obliq)],
+                            [0,    sin(eme_obliq),      cos(eme_obliq)]   )) # https://archive.org/details/131123ExplanatorySupplementAstronomicalAlmanac/page/n291/mode/2up\n,
 
     pos_equat = ascontiguousarray(eclip2equat) @ ascontiguousarray(eclip_state[:3])
     vel_equat = ascontiguousarray(eclip2equat) @ ascontiguousarray(eclip_state[3:6])
@@ -101,18 +104,19 @@ def get_perturbed_state(x_nom, idx, fd_pert):
 def accumulate_observations_efficiently(epoch, x_nom, obs_array, fd_pert=0.01):
     # sourcery skip: low-code-quality
 
-    """Accumulate observation data and run one iteration of differential corrector
+    """Accumulate observation data to run one iteration of differential corrector
 
     Args:
         epoch (float): Julian date for which to return state estimate
         x_nom (vector): Initial guess for nominal state at epoch
         obs_array (array): Array of observation data to be used for orbit fit and beta estimate if DART=True
-        fd_pert (float, optional): factor to perturb nominal state element by. Defaults to 0.01.
+        fd_pert (float, optional): Factor to perturb nominal state element by. Defaults to 0.01.
 
     Returns:
         P (array): Covariance matrix corresponding to the orbit fit at the end of iteration
-        at_w_b (vector): weighted residual vector for computing the nominal state guess at next iteration
-        b_accum (vector): reidual value for each observation for computing the RMS at each iteration
+        a (array): Array of partial derivatives calculated numerically using central differences
+        w (array): Array of observation weights
+        b (vector): Residual value for each observation for computing the RMS at each iteration
     """
     x_size = len(x_nom)
     num_obs = len(obs_array)
@@ -173,9 +177,6 @@ def accumulate_observations_efficiently(epoch, x_nom, obs_array, fd_pert=0.01):
             state_prop_to_obs_plus_arr[x_idx] = np.vstack((state_prop_to_obs_plus_bef_epoch, state_prop_to_obs_plus_aft_epoch))
             state_prop_to_obs_minus_arr[x_idx] = np.vstack((state_prop_to_obs_minus_bef_epoch, state_prop_to_obs_minus_aft_epoch))
 
-    lat = 30+14/60+40.68/3600 # lsst latitude, from https://www.lsst.org/scientists/keynumbers
-    lon = 70+44/60+57.90/3600 # lsst longitude, from https://www.lsst.org/scientists/keynumbers
-    elev = 2647 # lsst elevation, from https://www.lsst.org/scientists/keynumbers
     for obs_idx in range(num_obs):
         curr_obs = obs_array[obs_idx, :]
         time_obs = Time(curr_obs[0], format='mjd', scale='tdb')

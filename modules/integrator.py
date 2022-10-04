@@ -107,41 +107,6 @@ def spkezr_mod(
         states = starg
     return states
 
-def getDEpos(target, t, frame='ECLIPJ2000'):
-    """
-    Get a target body's position at an epoch in the specified frame from the DE epehemerides
-
-    Parameters:
-    -----------
-    target ... Target body NAIF ID
-    t      ... Query time (in NAIF SPICE Ephemeris time)
-    frame  ... Co-ordinate frame for desired position
-
-    Returns:
-    --------
-    pos    ... Position of the target body at query time in specified frame
-    """
-
-    return sp.spkezp(target, t, frame, 'NONE', 0)[0]
-
-
-def getDEstate(target, t, frame='ECLIPJ2000'):
-    """
-    Get a target body's state at an epoch in the specified frame from the DE epehemerides
-
-    Parameters:
-    -----------
-    target ... Target body NAIF ID
-    t      ... Query time (in NAIF SPICE Ephemeris time)
-    frame  ... Co-ordinate frame for desired state
-
-    Returns:
-    --------
-    state  ... State of the target body at query time in specified frame
-    """
-
-    return sp.spkez(target, t, frame, 'NONE', 0)[0]
-
 
 def loadSpiceKernels(spkfiles=spkFile):
     """
@@ -169,9 +134,11 @@ except:
 def getEphemerisParameters(filename):
     """
     Get parameters from JPL DExxx ephemeris file.
+
     Parameters:
     -----------
     filename  ... Path to JPL DExxx file
+
     Returns:
     --------
     au2km     ... Astronomical unit in kilometers
@@ -207,7 +174,7 @@ def getEphemerisParameters(filename):
                         'Please make sure that the planetary ephemeris file is the first entry in spk_files, not a minor body ephemeris. ' \
                         f'Your ephemeris version might not currently be supported. Currently supported files are: {de43x_list+de44x_list}')
 
-    # SPICE IDs for solar system planets and perturbing asteroids
+    # NAIF SPICE IDs for solar system planets and perturbing asteroids
     Ephemdict = {'Sun': 10, 'Mercury': 1, 'Venus': 2, 'Earth': 399, 'Moon': 301,
                     'Mars': 4, 'Jupiter': 5,  'Saturn': 6, 'Uranus': 7, 'Neptune': 8,
                     'Pluto': 9, 'Ceres': 2000001, 'Pallas': 2000002, 'Juno': 2000003,
@@ -217,7 +184,7 @@ def getEphemerisParameters(filename):
                     'Thisbe': 2000088, 'Eros': 2000433, 'Davida': 2000511,
                     'Interamnia': 2000704, 'Euphrosyne': 2000031, 'Camilla': 2000107,
                     'Doris': 2000048, 'Patientia': 2000451}
-
+    # Index at which bodies have their mass parameter in GMlist
     GMdict = {'Sun': 9, 'Mercury': 0, 'Venus': 1, 'Earth': 2, 'Moon': 10,
                 'Mars': 3, 'Jupiter': 4,  'Saturn': 5, 'Uranus': 6, 'Neptune': 7,
                 'Pluto': 8, 'Ceres': 11, 'Pallas': 12, 'Juno': 13,
@@ -264,34 +231,18 @@ def mjd2et(MJD):
 
     return (MJD+2400000.5-2451545.0)*86400
 
-@jit('float64(float64)', nopython=True, cache=True)
-def jd2mjd(JD):
-    """
-    Converts Julian Date Modified Julian Date.
-
-    Parameters:
-    -----------
-    JD  ... Julian Day
-
-    Returns:
-    --------
-    MJD ... Modified Julian Day
-    """
-
-    return JD-2400000.5
 
 ############################################
 # Force / acceleration calculation
 ###########################################
 def acc_ppn(t, y, GMarray=GMarray, Ephemlist=Ephemlist, Ephemorder=Ephemorder, ppnlist=ppnlist, au=au, clight=clight):
     """
-    Parameterized Post Newtonian accelerations for massless body in the Solar System.
+    Newtonian, parameterized post-Newtonian, and J2 zonal harmonic accelerations for massless bodies in the Solar System.
 
     Parameters:
     -----------
     t            ... Epochs
     y            ... State (positions and velocities)
-    DART         ... Toggle for whether the DART impact and resulting acceleration is considered
     GMarray      ... Arrau of G*mass for all perturbing bodies
     Ephemlist    ... List linking the name of perturbers to their Ephemeris id
     Ephemorder   ... Order in which the accelerations should be summed. 
@@ -329,6 +280,21 @@ def acc_ppn(t, y, GMarray=GMarray, Ephemlist=Ephemlist, Ephemorder=Ephemorder, p
 
 @jit('float64[:](float64[:], float64, float64[:], float64, float64)', nopython=True, cache=True)
 def acc_ppn_1order(r_rel, dist, v_rel, c, GM):
+    """
+    1st-order Parametrized Post-Newtonian (PPN) relativistic acceleration calculation of a specified celestial body
+
+    Parameters:
+    -----------
+    r_rel        ... Relative position vector from the object for which relativistic acceleration is to be calculated
+    dist         ... Relative distance from the object for which relativistic acceleration is to be calculated
+    v_rel        ... Relative velocity vector from the object for which relativistic acceleration is to be calculated
+    c            ... Speed of light [au/day]
+    GM           ... Mass parameter of the object for which relativistic acceleration is to be calculated
+
+    Returns:
+    -------
+    ppn_1order   ... PPN acceleration from specified celestial body
+    """
     # sourcery skip: inline-immediately-returned-variable
     r_rel = ascontiguousarray(r_rel)
     v_rel = ascontiguousarray(v_rel)
@@ -342,18 +308,15 @@ def acc_J2(idx, r_rel, dist, GM, au):
 
     Parameters:
     -----------
-    obj          ... Object for which J2 acceleration is to be calculated
-    obj_pos      ... Barycentric position of object
-    y            ... State (positions and velocities)
-    dist         ... 
-    GMlist       ... List of G*mass for all perturbing bodies
-    GMdict       ... Dictionary linking the name of perturbers to their GM id
-    Ephemdict    ... Dictionary linking the name of perturbers to their Ephemeris id
+    idx          ... Index for the object for which J2 acceleration is to be calculated. 0 is the Sun and 1 is the Earth.
+    r_rel        ... Relative position vector from the object for which J2 acceleration is to be calculated
+    dist         ... Relative distance from the object for which J2 acceleration is to be calculated
+    GM           ... Mass parameter of the object for which J2 acceleration is to be calculated
     au           ... Astronomical unit [km]
 
     Returns:
     -------
-    acc_J2       ... J2 acceleration of specified celestial body
+    acc_J2       ... J2 acceleration from specified celestial body
     """
     ################################# DERIVATION START #################################
     # from sympy import symbols, simplify
@@ -408,14 +371,14 @@ Implementation: Python 3.8, R. Makadia 20210108
 """
 # START INTEGRATING!!!
 def get_gr15_constants():
-    '''
+    """
     Returns the constants needed for a 15th order Gauss-Radau Integrator
 
             Returns:
                     h (array): Gauss-Radau spacings of order 8
                     r (array): Coefficients to relate function evaluations and g matrix
                     c (array): Coefficients to relate g matrix and b matrix
-    '''
+    """
     # from [3]
     h = array([0.0, 0.0562625605369221464656521910318, 0.180240691736892364987579942780, 0.352624717113169637373907769648, 0.547153626330555383001448554766,	0.734210177215410531523210605558, 0.885320946839095768090359771030, 0.977520613561287501891174488626])
     num_nodes = h.size
@@ -445,7 +408,7 @@ h, r, c = get_gr15_constants()
 
 @jit('Tuple((float64[:,:], float64[:,:]))(float64[:,:], float64[:,:], float64[:,:], float64[:,:], int64, float64[:,:])', nopython=True, cache=True)
 def gr15_coefficients(g, b, r, c, h_idx, accels):
-    '''
+    """
     Compute/refine the b and g matrices for approximating states
 
             Parameters:
@@ -459,7 +422,7 @@ def gr15_coefficients(g, b, r, c, h_idx, accels):
             Returns:
                     g (array): Coefficients to refine b matrix at every Gauss-Radau spacing
                     b (array): Coefficients to refine state estimate at every Gauss-Radau spacing
-    '''
+    """
     F1 = accels[0, :]
     F2 = accels[1, :]
     F3 = accels[2, :]
@@ -547,19 +510,19 @@ def get_initial_timestep(acc_ppn, t0_actual, state0_actual, acc0_actual, dt0, dt
     """Compute the initial timestep and initialize the timestep counter
 
     Args:
-        acc_ppn (_type_): _description_
+        acc_ppn (function): Function to evaluate accelerations for a specified time and state
         t0_actual (float): [MJD], Epoch of integration period
-        state0_actual (array): [au, au/day], Didymos state at integration epoch
+        state0_actual (array): [au, au/day], Initial state at integration epoch
         acc0_actual (array): [au/day^2], Function evaluation at integration epoch
-        dt0 (_type_): _description_
-        dt_max (_type_): _description_
-        tf_actual (_type_): _description_
+        dt0 (float/NoneType): If specified, this will be used as the initial timestep over the algorithm in this function
+        dt_max (float): [day], Maximum timestep
+        tf_actual (float): [MJD], End time of integration period
 
     Returns:
         dt (float): [day], Initial integration timestep
-        dt_max (float): 
+        dt_max (float): [day], Maximum timestep
         timestep_counter (int): Timestep counter (1 because this function evaluates initial timestep)
-        forward_prop (bool): 
+        forward_prop (bool): Boolean that returns True if propagation is forward in time, False otherwise.
     """
     forward_prop = 1 if tf_actual > t0_actual else 0
     dt_max = dt_max if forward_prop else -dt_max
@@ -607,7 +570,7 @@ def get_initial_timestep(acc_ppn, t0_actual, state0_actual, acc0_actual, dt0, dt
 
 @jit('float64[:](float64[:], float64[:], float64, float64[:,:], float64)', nopython=True, cache=True)
 def approximate_state(state0, acc0, h_val, b, dt):
-    '''
+    """
     Approximate the state at specified spacing given a b matrix and a timestep
 
             Parameters:
@@ -619,7 +582,7 @@ def approximate_state(state0, acc0, h_val, b, dt):
 
             Returns:
                     approx_state (array): State approximation at specified Gauss-Radau spacing for the given timestep
-    '''
+    """
     pos0 = state0[:3]
     vel0 = state0[3:6]
 
@@ -630,7 +593,7 @@ def approximate_state(state0, acc0, h_val, b, dt):
 
 @jit('Tuple((float64[:,:], float64[:,:], int64))(float64[:,:], float64, float64[:,:], int64)', nopython=True, cache=True)
 def refine_b_matrix(b, q, e, timestep_counter):
-    '''
+    """
     Refines the b matrix from end of one timestep for beginning of next timestep
 
             Parameters:
@@ -643,7 +606,7 @@ def refine_b_matrix(b, q, e, timestep_counter):
                     b (array): Coefficients to refine state estimate at every Gauss-Radau spacing
                     e (array): Auxiliary coefficient matrix for next timestep
                     timestep_counter (int): Timestep counter
-    '''
+    """
     delta_b = b*0 if timestep_counter == 1 else b - e
     q2 = q*q
     q3 = q2*q
@@ -665,9 +628,9 @@ def refine_b_matrix(b, q, e, timestep_counter):
 
     return b, e, timestep_counter
 
-def gr15_step(t0_old, t0, state0, acc0, dt, dt_factor, dt_max, tf_actual, tol, h, r, c, g, b, b_old, e, adaptive_timestep, timestep_counter):
+def gr15_step(t0, state0, acc0, dt, dt_factor, dt_max, tf_actual, tol, h, r, c, g, b, b_old, e, adaptive_timestep, timestep_counter):
     # sourcery skip: low-code-quality
-    '''
+    """
     Propagate the state through one timestep
 
             Parameters:
@@ -700,7 +663,7 @@ def gr15_step(t0_old, t0, state0, acc0, dt, dt_factor, dt_max, tf_actual, tol, h
                     e (array): Auxiliary coefficient matrix for next timestep
                     timestep_counter (int): Timestep counter
                     integrator_flag (int): Status of integrator step (0: initialized, 1: Step accepted, 2: Integration end reached)
-    '''
+    """
     
     integrator_flag = 0
     max_pc_iter = 12
@@ -735,7 +698,6 @@ def gr15_step(t0_old, t0, state0, acc0, dt, dt_factor, dt_max, tf_actual, tol, h
 
         # iteration acceptance if statement
         if rel_error <= 1:
-            t0_old = t0
             t0 = t0 + dt
             b_old = b
             q = dt_req/dt
@@ -763,12 +725,11 @@ def gr15_step(t0_old, t0, state0, acc0, dt, dt_factor, dt_max, tf_actual, tol, h
         if integrator_flag > 0:
             break
 
-    return t0_old, t0, state0_next, acc0_next, dt, g, b, b_old, e, timestep_counter, integrator_flag
+    return t0, state0_next, acc0_next, dt, g, b, b_old, e, timestep_counter, integrator_flag
 
 # main propagator function
-def propagate_gr15(t0, state0, tf, t_eval=array([]), adaptive_timestep=True, dt0=None, dt_max=6, tol=1e-6, dt_factor=0.25, NAIF_ID='399', ca_tol=0.1):
-    # sourcery skip: low-code-quality
-    '''
+def propagate_gr15(t0, state0, tf, t_eval=array([]), adaptive_timestep=True, dt0=None, dt_max=6, tol=1e-6, dt_factor=0.25):
+    """
     Pass an initial state through an N-body propagator that uses the 15th order Gauss-Radau integrator
 
             Parameters:
@@ -781,15 +742,12 @@ def propagate_gr15(t0, state0, tf, t_eval=array([]), adaptive_timestep=True, dt0
                     dt_max (float): [day], Maximum timestep
                     tol (float): Integrator error tolerance
                     dt_factor (float): [day], Factor for maximum change in consecutive timesteps
-                    NAIF_ID (str): NAIF object ID of body to calculate close approaches for
-                    ca_tol (float): [au], Close approach maximum distance tolerance
 
             Returns:
                     t0_array (array): [MJD], array of integration epochs
                     state0_array (array): [au, au/day], Didymos state at integration epochs
                     state_eval (array): [au, au/day], Didymos state at evaluation epochs
-                    close_approach_summary (array): [boolean, MJD, (au, au/day), au], Didymos close approach data [impact boolean, time, relative state, b plane parameters]
-    '''
+    """
     if t0 == tf:
         print('Final time is same as integration start time!')
         return t0, state0, None
@@ -801,14 +759,13 @@ def propagate_gr15(t0, state0, tf, t_eval=array([]), adaptive_timestep=True, dt0
 
     acc0 = acc_ppn(t0, state0)[3:6]
     dt, dt_max, timestep_counter, forward_prop = get_initial_timestep(acc_ppn, t0, state0, acc0, dt0, dt_max, tf)
-    t0_old = t0
     t0_list = [t0]
     state0_list = [state0]
     acc0_list = [acc0]
     b_list = []
     integrator_flag = 0 # means integrator is initializing
     while integrator_flag != 2:
-        t0_old, t0, state0, acc0, dt, g, b, b_old, e, timestep_counter, integrator_flag = gr15_step(t0_old, t0, state0, acc0, dt, dt_factor, dt_max, tf, tol, h, r, c, g, b, b_old, e, adaptive_timestep, timestep_counter)
+        t0, state0, acc0, dt, g, b, b_old, e, timestep_counter, integrator_flag = gr15_step(t0, state0, acc0, dt, dt_factor, dt_max, tf, tol, h, r, c, g, b, b_old, e, adaptive_timestep, timestep_counter)
         t0_list.append(t0)
         state0_list.append(state0)
         acc0_list.append(acc0)
@@ -832,7 +789,7 @@ def propagate_gr15(t0, state0, tf, t_eval=array([]), adaptive_timestep=True, dt0
 
 @jit('float64[:,:](float64[:], float64[:,:])', nopython=True, cache=True)
 def newton_coefficients(t_data, state_data):
-    '''
+    """
     Calculate Newton interpolation coefficients given states at a set of time
 
             Parameters:
@@ -841,7 +798,7 @@ def newton_coefficients(t_data, state_data):
                     
             Returns:
                     coeffs (array): Array of interpolating coefficients
-    '''
+    """
     n = len(t_data)
     state_size = state_data.shape[1]
     c = zeros((state_size, n, n))
@@ -855,7 +812,7 @@ def newton_coefficients(t_data, state_data):
 
 @jit('float64[:](float64[:,:], float64[:], float64)', nopython=True, cache=True)
 def newton_polynomial(coeffs, t_data, t_interp):
-    '''
+    """
     Evaluate Newton polynomial to find integrated state at an interpolation time
 
             Parameters:
@@ -865,7 +822,7 @@ def newton_polynomial(coeffs, t_data, t_interp):
                     
             Returns:
                     state_interp (array): [au, au/day], Interpolated state at t_interp     
-    '''
+    """
     n = len(t_data)-1
     state_interp = coeffs[:, n]
     for i in range(1, n+1):
@@ -875,7 +832,7 @@ def newton_polynomial(coeffs, t_data, t_interp):
 
 @jit('int64(float64[:], float64)', nopython=True, cache=True)
 def find_exact_or_previous_index(array, value):
-    '''
+    """
     Find the index of the equal or previous entry to a value in the integrator result's time array
 
             Parameters:
@@ -884,7 +841,7 @@ def find_exact_or_previous_index(array, value):
                     
             Returns:
                     state_interp (array): [au, au/day], Interpolated state at t_interp     
-    '''
+    """
     # find closest value index
     idx = (np.abs(array - value)).argmin()
     # if forward integration and array entry is bigger than value 
@@ -898,7 +855,7 @@ def find_exact_or_previous_index(array, value):
 
 @jit('float64[:](float64, float64[:], float64[:,:], float64[:,:], float64[:], float64[:,:,:], float64[:])', nopython=True, cache=True)
 def gr15_interpolate(t_interp, t0_array, state0_array, acc0_array, dt_array, b_array, h):
-    '''
+    """
     Interpolate epochs and states generated by the Gauss-Radau integrator
 
             Parameters:
@@ -912,7 +869,7 @@ def gr15_interpolate(t_interp, t0_array, state0_array, acc0_array, dt_array, b_a
                     
             Returns:
                     state_interp (array): [au, au/day], Interpolated state at t_interp     
-    '''
+    """
     idx = find_exact_or_previous_index(t0_array, t_interp)
     if t_interp == t0_array[idx]:
         return state0_array[idx, :]

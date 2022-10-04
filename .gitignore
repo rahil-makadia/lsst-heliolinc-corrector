@@ -2,6 +2,7 @@
 
 # SPICE kernels
 *.bsp
+!data/planets_big16_de441_1950_2350.bsp
 *.tls
 
 # Jupyter Notebook and pycache
