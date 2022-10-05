@@ -22,3 +22,5 @@ and add it as a Jupyter notebook kernel to be used with the demo .ipynb files on
 python -m ipykernel install --user --name lsst-corrector
 ```
 This last step only needs to be done once.
+
+### Please feel free contact Rahil (makadia2@illinois.edu) with questions/concerns
